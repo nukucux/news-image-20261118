@@ -1,146 +1,251 @@
-"""Draws entry.png: a one-image summary of the world's news of Wednesday 18 November 2026.
+"""Draws entry.png: a one-image front page of the world's news of Wednesday 18 November 2026.
 
-A world map with a numbered pin where each story happened, and a numbered card per story below it.
-Run offline on the author's machine (needs Pillow) with the path of Natural Earth's public-domain
-ne_110m_land.geojson as its argument; the result is committed as entry.png and main.py copies it.
-Every story is an event reported on 18 November 2026 (see NEWS.md for sources).
+Four illustrated lead stories, then the rest of the day by region. Run offline on the author's machine
+(needs Pillow); the result is committed as entry.png and main.py copies it. Every story is an event that
+happened or was first reported on 18 November 2026 (see NEWS.md for sources).
 """
-import json
-import sys
+import math
 from PIL import Image, ImageDraw, ImageFont
 
 S = 2  # supersampling factor
 W = H = 1024
 FONT_DIR = "C:/Windows/Fonts/"
 BOLD = FONT_DIR + "arialbd.ttf"
+REG = FONT_DIR + "arial.ttf"
 HEAVY = FONT_DIR + "impact.ttf"
 
 BG = (12, 19, 34)
-OCEAN = (17, 32, 58)
-LAND = (52, 74, 108)
-COAST = (86, 112, 150)
 PANEL = (26, 38, 62)
 INK = (244, 246, 250)
+SOFT = (206, 214, 230)
 MUTED = (150, 166, 196)
 ACCENT = (255, 196, 61)
-
-# map window: equirectangular, longitude -180..180 across the full width, latitude 78N..56S
-MAP_Y0, LAT_N, LAT_S = 124, 78.0, -56.0
-MAP_H = round(W * (LAT_N - LAT_S) / 360)
-
-# (location, headline, lon, lat, badge offset dx, dy, colour)
-STORIES = [
-    ("Shenzhen:", "Trump lands for APEC and Xi greets him; Putin arrives too. 3-way summit set for 19 Nov", 114.06, 22.54, 40, 26, (255, 99, 99)),
-    ("Crimea:", "Ukraine hits the Kerch bridge for a 3rd time in 4 days; Russia shuts it to traffic", 36.5, 45.3, 6, -42, (88, 166, 255)),
-    ("Gaza:", "Israel's first operation in central Gaza since the Oct 2025 ceasefire", 34.4, 31.4, -44, 30, (96, 214, 150)),
-    ("Washington:", "House Democrats nominate Hakeem Jeffries for Speaker after midterm wins", -77.0, 38.9, -50, 22, (140, 160, 255)),
-    ("New York:", "Anthropic prices the biggest IPO ever, a reported $107B; trading opens 19 Nov", -74.0, 40.7, 34, -34, (110, 230, 160)),
-    ("Bangladesh:", "Garment workers' pay protests close 55 factories; about 300 arrests", 90.4, 23.8, -18, 46, (255, 196, 61)),
-    ("Haiti:", "Salvadoran troops destroy a gang leader's house in Canaan", -72.2, 18.6, 34, 34, (255, 150, 90)),
-    ("Deep space:", "Voyager 1 reaches one light-day from Earth, the first craft to do so", None, None, 0, 0, (200, 170, 255)),
-]
 
 
 def font(path, size):
     return ImageFont.truetype(path, int(size * S))
 
 
-def proj(lon, lat):
-    return (lon + 180) / 360 * W, MAP_Y0 + (LAT_N - lat) / (LAT_N - LAT_S) * MAP_H
+# ---- icon primitives: each icon draws in a 150 x 150 box on its own layer ----
+def rect(d, x0, y0, x1, y1, fill):
+    d.rectangle([x0 * S, y0 * S, x1 * S, y1 * S], fill=fill)
 
 
-def sc(pts):
-    return [(x * S, y * S) for x, y in pts]
+def ell(d, cx, cy, r, fill, outline=None, width=0):
+    d.ellipse([(cx - r) * S, (cy - r) * S, (cx + r) * S, (cy + r) * S], fill=fill, outline=outline, width=width * S)
 
 
-def draw_map(d, geojson_path):
-    d.rectangle([0, MAP_Y0 * S, W * S, (MAP_Y0 + MAP_H) * S], fill=OCEAN)
-    for lon in range(-150, 180, 30):
-        x, _ = proj(lon, 0)
-        d.line([(x * S, MAP_Y0 * S), (x * S, (MAP_Y0 + MAP_H) * S)], fill=(24, 42, 72), width=S)
-    for lat in (60, 30, 0, -30):
-        _, y = proj(0, lat)
-        d.line([(0, y * S), (W * S, y * S)], fill=(24, 42, 72), width=S)
-    with open(geojson_path, encoding="utf8") as f:
-        land = json.load(f)
-    for feat in land["features"]:
-        g = feat["geometry"]
-        polys = g["coordinates"] if g["type"] == "MultiPolygon" else [g["coordinates"]]
-        for poly in polys:
-            ring = [proj(lon, max(min(lat, LAT_N + 2), LAT_S - 2)) for lon, lat in poly[0]]
-            if len(ring) > 2:
-                d.polygon(sc(ring), fill=LAND, outline=COAST, width=S)
+def poly(d, pts, fill):
+    d.polygon([(x * S, y * S) for x, y in pts], fill=fill)
 
 
-def badge(d, cx, cy, r, n, colour, size):
-    d.ellipse([(cx - r - 2) * S, (cy - r - 2) * S, (cx + r + 2) * S, (cy + r + 2) * S], fill=BG)
-    d.ellipse([(cx - r) * S, (cy - r) * S, (cx + r) * S, (cy + r) * S], fill=colour)
-    d.text((cx * S, (cy + 1) * S), str(n), font=font(BOLD, size), fill=(14, 20, 34), anchor="mm")
+def line(d, pts, fill, width):
+    d.line([(x * S, y * S) for x, y in pts], fill=fill, width=int(width * S), joint="curve")
 
 
-def draw_pins(d):
-    for n, (_, _, lon, lat, dx, dy, colour) in enumerate(STORIES, 1):
-        if lon is None:  # deep space: over the open Pacific at the right edge, pointing off the map
-            bx, by = W - 40, proj(0, 2)[1]
-            for k in range(4):
-                d.line(sc([(bx + 4 + k * 9, by - 22 - k * 12), (bx + 8 + k * 9, by - 28 - k * 12)]), fill=colour, width=3 * S)
-            d.text(((bx - 24) * S, by * S), "Voyager 1", font=font(BOLD, 17), fill=colour, anchor="rm")
-            badge(d, bx, by, 17, n, colour, 20)
-            continue
-        x, y = proj(lon, lat)
-        bx, by = x + dx, y + dy
-        d.line(sc([(x, y), (bx, by)]), fill=colour, width=3 * S)
-        d.ellipse([(x - 6) * S, (y - 6) * S, (x + 6) * S, (y + 6) * S], fill=INK, outline=colour, width=3 * S)
-        badge(d, bx, by, 17, n, colour, 20)
+def star(d, cx, cy, r1, r2, fill, n=8):
+    poly(d, [(cx + (r1 if k % 2 == 0 else r2) * math.cos(k * math.pi / n), cy + (r1 if k % 2 == 0 else r2) * math.sin(k * math.pi / n)) for k in range(2 * n)], fill)
+
+
+def icon_summit(d):
+    for i, (c, t) in enumerate([((60, 100, 200), "US"), ((215, 40, 45), "CN"), ((236, 238, 244), "RU")]):
+        cx, cy = 28 + i * 47, 62 + (20 if i == 1 else 0)
+        ell(d, cx, cy, 25, c)
+        d.text((cx * S, cy * S), t, font=font(BOLD, 24), fill=(20, 30, 50) if t == "RU" else (255, 255, 255), anchor="mm")
+    line(d, [(28, 94), (75, 112), (122, 94)], ACCENT, 5)
+    d.text((75 * S, 136 * S), "APEC", font=font(HEAVY, 30), fill=ACCENT, anchor="mm")
+
+
+def icon_gulf(d):
+    rect(d, 0, 104, 150, 150, (30, 90, 150))
+    poly(d, [(0, 104), (60, 92), (150, 100), (150, 104)], (200, 176, 120))
+    ell(d, 96, 110, 16, (255, 120, 40))
+    star(d, 96, 104, 26, 12, (255, 150, 50))
+    ell(d, 96, 104, 8, (255, 230, 140))
+    for cx, cy in [(30, 22), (62, 22), (30, 54), (62, 54)]:
+        ell(d, cx, cy, 13, None, outline=(220, 224, 236), width=3)
+    line(d, [(30, 22), (62, 54)], (220, 224, 236), 6)
+    line(d, [(62, 22), (30, 54)], (220, 224, 236), 6)
+    ell(d, 46, 38, 8, (180, 186, 200))
+    line(d, [(56, 50), (84, 82)], (255, 196, 61), 3)
+
+
+def icon_gaza(d):
+    poly(d, [(62, 8), (92, 18), (60, 138), (40, 130)], (214, 196, 150))
+    rect(d, 0, 8, 56, 138, (40, 100, 160))
+    for i in range(0, 130, 14):
+        line(d, [(112, 12 + i), (112, 20 + i)], (230, 230, 240), 3)
+    line(d, [(140, 75), (84, 75)], (235, 60, 60), 10)
+    poly(d, [(62, 75), (90, 56), (90, 94)], (235, 60, 60))
+
+
+def icon_bridge(d):
+    rect(d, 0, 95, 150, 150, (30, 90, 150))
+    for i in range(4):
+        line(d, [(5 + i * 40, 118), (20 + i * 40, 112), (35 + i * 40, 118)], (90, 150, 210), 3)
+    for px in (22, 128):
+        rect(d, px - 6, 55, px + 6, 100, (150, 156, 170))
+    rect(d, 0, 50, 52, 61, (200, 204, 214))
+    rect(d, 98, 50, 150, 61, (200, 204, 214))
+    poly(d, [(52, 50), (64, 72), (70, 62)], (200, 204, 214))
+    poly(d, [(98, 50), (86, 80), (80, 62)], (200, 204, 214))
+    star(d, 75, 40, 26, 11, (255, 120, 40))
+    ell(d, 75, 40, 8, (255, 226, 120))
+
+
+def paste_icon(img, fn, x, y, size):
+    layer = Image.new("RGBA", (150 * S, 150 * S), (0, 0, 0, 0))
+    fn(ImageDraw.Draw(layer))
+    layer = layer.resize((size * S, size * S), Image.LANCZOS)
+    img.paste(layer, (int(x * S), int(y * S)), layer)
+
+
+LEADS = [
+    ("CHINA", (255, 104, 104), icon_summit, "Trump lands in Shenzhen for APEC; Xi greets him. Summit with Putin set for 19 Nov"),
+    ("GULF", (255, 150, 70), icon_gulf, "Iran strikes Kuwait and Bahrain after a US strike on its Qeshm Island; Gulf states condemn"),
+    ("GAZA", (96, 214, 150), icon_gaza, "Israel's first ground push in central Gaza since the ceasefire: 3 killed, families flee camps"),
+    ("UKRAINE", (88, 166, 255), icon_bridge, "Ukraine hits the Crimea bridge for a 3rd time in 4 days; Russia shuts it to all traffic"),
+]
+
+SECTIONS = [
+    ("EUROPE", (88, 166, 255), [
+        ("Ukraine:", "Russian strikes kill at least 5, four of them in Odesa"),
+        ("EU:", "Commission proposes a €45bn loan to keep Ukraine funded and armed"),
+        ("Migration:", "five EU states look to Rwanda to take rejected asylum seekers"),
+    ]),
+    ("MIDDLE EAST", (96, 214, 150), [
+        ("Yemen:", "Saudi-led coalition hits 60 Houthi sites as Houthis push towards Aden"),
+        ("Israel:", "Eisenkot ally Matan Kahana elected Knesset speaker, a blow to Netanyahu"),
+        ("West Bank:", "Israel delays E1 settlement contracts after UK sanctions"),
+        ("Iraq:", "six French nationals jailed for life for joining ISIL"),
+        ("Lebanon:", "US sanctions a charity it calls a Hezbollah front"),
+    ]),
+    ("ASIA", (255, 104, 104), [
+        ("Shenzhen:", "Xi meets Putin, says they should lead a 'multipolar world'"),
+        ("Diplomacy:", "Trump and Putin to hold one-on-one talks in China on Thursday"),
+        ("Bangladesh:", "garment wage protests shut 55 factories; about 300 arrests"),
+        ("Kashmir:", "Indian troops kill a militant commander in Kulgam"),
+        ("Thailand:", "clean-water scramble as arsenic from Myanmar mines taints rivers"),
+        ("South Korea:", "AI cheating scandal shakes university entrance exams"),
+    ]),
+    ("AFRICA", (255, 196, 61), [
+        ("Senegal:", "migrant boat capsizes off Yenne, at least one dead"),
+        ("DR Congo:", "fighting goes on in the Kivus despite rival peace efforts"),
+    ]),
+    ("OCEANIA", (120, 220, 230), [
+        ("Australia:", "sanctions 3 Israelis and 4 groups over West Bank settlements"),
+    ]),
+    ("AMERICAS", (140, 160, 255), [
+        ("US:", "Hakeem Jeffries formally nominated as the first Black House Speaker"),
+        ("Alaska:", "Democrat Mary Peltola flips the last Senate seat to be called"),
+        ("Venezuela:", "Hegseth visits Caracas, announces a military partnership"),
+        ("US:", "Homeland Security chief grilled over the nationwide flight ground stop"),
+        ("Bird flu:", "top US egg producer Cal-Maine culls 1.8 million hens"),
+        ("Haiti:", "Salvadoran troops destroy a gang leader's house in Canaan"),
+    ]),
+    ("BUSINESS · SCIENCE · CULTURE · SPORT", (200, 170, 255), [
+        ("Markets:", "Anthropic prices the biggest IPO ever, a reported $107B; trading opens 19 Nov"),
+        ("Space:", "Voyager 1 reaches one light-day (~26bn km) from Earth, 49 years after launch"),
+        ("Art:", "Van Gogh's Blossoming Chestnut Trees sells for a record $190.4M"),
+        ("Football:", "FIFA nominations close; Infantino faces three challengers"),
+        ("Cricket:", "Bangladesh's Litton Das sets a Test record of 8 dismissals in an innings"),
+        ("Gaming:", "PlayStation network outage on the eve of the GTA VI launch"),
+    ]),
+]
 
 
 def wrap_words(d, words, max_w):
     """words: list of (text, font, colour); returns lines of the same tuples."""
     lines, cur, cur_w = [], [], 0
     for word in words:
-        w = d.textlength(word[0] + " ", font=word[1])
         if cur and cur_w + d.textlength(word[0], font=word[1]) > max_w * S:
             lines.append(cur)
             cur, cur_w = [], 0
         cur.append(word)
-        cur_w += w
+        cur_w += d.textlength(word[0] + " ", font=word[1])
     lines.append(cur)
     return lines
 
 
-def draw_cards(d):
-    loc_f, head_f = font(BOLD, 23), font(BOLD, 23)
-    x0, y0, cw, ch, gx, gy = 16, MAP_Y0 + MAP_H + 12, 488, 108, 16, 8
-    for i, (loc, text, *_, colour) in enumerate(STORIES):
-        col, row = i % 2, i // 2
-        x, y = x0 + col * (cw + gx), y0 + row * (ch + gy)
-        d.rounded_rectangle([x * S, y * S, (x + cw) * S, (y + ch) * S], 16 * S, fill=PANEL)
-        d.rectangle([x * S, (y + 10) * S, (x + 5) * S, (y + ch - 10) * S], fill=colour)
-        badge(d, x + 36, y + ch / 2, 21, i + 1, colour, 24)
-        words = [(loc, loc_f, colour)] + [(w, head_f, INK) for w in text.split()]
-        lines = wrap_words(d, words, cw - 82)
-        ty = y + ch / 2 - len(lines) * 27 / 2
-        for ln in lines:
-            tx = x + 68
-            for word, fnt, fill in ln:
-                d.text((tx * S, ty * S), word, font=fnt, fill=fill)
-                tx += d.textlength(word + " ", font=fnt) / S
-            ty += 27
+def draw_words(d, lines, x, y, lh):
+    for ln in lines:
+        tx = x
+        for word, fnt, fill in ln:
+            d.text((tx * S, y * S), word, font=fnt, fill=fill)
+            tx += d.textlength(word + " ", font=fnt) / S
+        y += lh
+    return y
 
 
-def main(geojson_path):
+def count_stories():
+    return len(LEADS) + sum(len(items) for _, _, items in SECTIONS)
+
+
+def main():
     img = Image.new("RGB", (W * S, H * S), BG)
     d = ImageDraw.Draw(img)
-    d.text((W // 2 * S, 40 * S), "WEDNESDAY 18 NOVEMBER 2026", font=font(HEAVY, 54), fill=ACCENT, anchor="mm")
-    d.text((W // 2 * S, 94 * S), "THE WORLD'S NEWS IN ONE IMAGE", font=font(BOLD, 26), fill=INK, anchor="mm")
-    draw_map(d, geojson_path)
-    draw_pins(d)
-    draw_cards(d)
-    foot = "Reported 18 Nov 2026 · AP · BBC · CNN · PBS · CNBC · Democracy Now · The Daily Star · Map: Natural Earth"
-    d.text((W // 2 * S, 1011 * S), foot, font=font(BOLD, 14), fill=MUTED, anchor="mm")
+
+    # masthead
+    d.text((W // 2 * S, 38 * S), "WEDNESDAY 18 NOVEMBER 2026", font=font(HEAVY, 52), fill=ACCENT, anchor="mm")
+    sub = f"THE WORLD'S NEWS IN ONE IMAGE  ·  {count_stories()} STORIES  ·  6 CONTINENTS"
+    d.text((W // 2 * S, 86 * S), sub, font=font(BOLD, 21), fill=INK, anchor="mm")
+    d.line([(16 * S, 104 * S), ((W - 16) * S, 104 * S)], fill=ACCENT, width=2 * S)
+
+    # four illustrated leads
+    lead_f, tag_f = font(BOLD, 18), font(HEAVY, 26)
+    cw, ch, y0 = 240, 222, 114
+    for i, (tag, colour, icon, text) in enumerate(LEADS):
+        x = 16 + i * (cw + 8)
+        d.rounded_rectangle([x * S, y0 * S, (x + cw) * S, (y0 + ch) * S], 14 * S, fill=PANEL, outline=colour, width=2 * S)
+        paste_icon(img, icon, x + 10, y0 + 10, 92)
+        d.text(((x + 112) * S, (y0 + 40) * S), tag, font=tag_f, fill=colour, anchor="lm")
+        d.text(((x + 112) * S, (y0 + 72) * S), "LEAD STORY", font=font(BOLD, 13), fill=MUTED, anchor="lm")
+        lines = wrap_words(d, [(w, lead_f, INK) for w in text.split()], cw - 22)
+        draw_words(d, lines, x + 12, y0 + 110, 22)
+
+    # the rest of the day, by region, in three columns, then a full-width band
+    head_f, loc_f, item_f = font(HEAVY, 21), font(BOLD, 16.5), font(REG, 16.5)
+    col_w, gap, top, lh = 320, 16, y0 + ch + 16, 19.5
+    sections = {name: (colour, items) for name, colour, items in SECTIONS}
+
+    def head(x, y, name, colour):
+        d.rectangle([x * S, (y + 4) * S, (x + 5) * S, (y + 23) * S], fill=colour)
+        d.text(((x + 12) * S, (y + 14) * S), name, font=head_f, fill=colour, anchor="lm")
+        return y + 32
+
+    def item(x, y, loc, text, colour):
+        words = [(loc, loc_f, colour)] + [(w, item_f, SOFT) for w in text.split()]
+        d.ellipse([(x + 3) * S, (y + 7) * S, (x + 9) * S, (y + 13) * S], fill=colour)
+        return draw_words(d, wrap_words(d, words, col_w - 18), x + 15, y, lh) + 7
+
+    bottom = top
+    for col, names in enumerate([["EUROPE", "MIDDLE EAST"], ["ASIA", "OCEANIA"], ["AMERICAS", "AFRICA"]]):
+        x, y = 16 + col * (col_w + gap), top
+        for name in names:
+            colour, items = sections[name]
+            y = head(x, y, name, colour)
+            for loc, text in items:
+                y = item(x, y, loc, text, colour)
+            y += 8
+        print(f"column {col} ends at y={y}")
+        bottom = max(bottom, y)
+
+    band = SECTIONS[-1]
+    y = head(16, bottom + 2, band[0], band[1])
+    d.line([(16 * S, (bottom - 4) * S), ((W - 16) * S, (bottom - 4) * S)], fill=(44, 60, 92), width=S)
+    band_items = band[2]
+    for r in range(0, len(band_items), 3):  # rows of three; each row starts below the tallest item above it
+        row_end = y
+        for col, (loc, text) in enumerate(band_items[r:r + 3]):
+            row_end = max(row_end, item(16 + col * (col_w + gap), y, loc, text, band[1]))
+        y = row_end + 2
+    print("band ends at y=", y)
+
+    foot = "Sources: AP · AFP · BBC · CNN · CNBC · PBS · Al Jazeera · The Guardian · Democracy Now · The Daily Star"
+    d.text((W // 2 * S, 1010 * S), foot, font=font(BOLD, 13), fill=MUTED, anchor="mm")
     img = img.resize((W, H), Image.LANCZOS)
     img.save("entry.png", optimize=True)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main()
