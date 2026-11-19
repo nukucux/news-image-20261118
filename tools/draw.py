@@ -135,13 +135,36 @@ def icon_voyager(d, ox, oy):
         ell(d, ox + sx, oy + sy, 2.5, 2.5, (255, 255, 255))
 
 
+def icon_capitol(d, ox, oy):
+    rect(d, ox + 8, oy + 122, ox + 142, oy + 140, (214, 218, 228))
+    rect(d, ox + 20, oy + 70, ox + 130, oy + 122, (236, 238, 246))
+    for i in range(6):
+        rect(d, ox + 26 + i * 18, oy + 74, ox + 34 + i * 18, oy + 118, (176, 182, 200))
+    poly(d, [(ox + 14, oy + 70), (ox + 75, oy + 44), (ox + 136, oy + 70)], (214, 218, 228))
+    d.pieslice([(ox + 42) * S, (oy + 8) * S, (ox + 108) * S, (oy + 74) * S], 180, 360, fill=(244, 246, 252))
+    rect(d, ox + 72, oy + 0, ox + 78, oy + 14, (200, 204, 214))
+    poly(d, [(ox + 78, oy + 0), (ox + 98, oy + 5), (ox + 78, oy + 10)], (80, 130, 255))
+
+
+def icon_ipo(d, ox, oy):
+    box(d, ox + 6, oy + 14, 138, 112, (16, 26, 46), r=10)
+    for i in range(1, 4):
+        line(d, [(ox + 14, oy + 14 + i * 28), (ox + 136, oy + 14 + i * 28)], (40, 56, 90), 2)
+    pts = [(ox + 16, oy + 108), (ox + 44, oy + 92), (ox + 64, oy + 98), (ox + 92, oy + 62), (ox + 112, oy + 52), (ox + 134, oy + 24)]
+    line(d, pts, (90, 230, 140), 6)
+    poly(d, [(ox + 140, oy + 16), (ox + 120, oy + 20), (ox + 134, oy + 36)], (90, 230, 140))
+    d.text(((ox + 75) * S, (oy + 138) * S), "IPO", font=font(HEAVY, 26), fill=ACCENT, anchor="mm")
+
+
+HERO = ("CHINA · APEC", (255, 110, 110), "Trump lands in Shenzhen for APEC and Xi greets him on the tarmac; Putin arrives too. First-ever three-way summit is set for 19 Nov", icon_summit)
+
 STORIES = [
-    ("UKRAINE", (80, 160, 255), "Crimea bridge hit for the 3rd time in 4 days; Russia closes it to all traffic", icon_bridge),
-    ("CHINA", (255, 90, 90), "Trump lands in Shenzhen for APEC, Xi greets him, Putin arrives; 3-way talks set for 19 Nov", icon_summit),
-    ("GAZA", (110, 210, 150), "Israel launches its first operation in central Gaza since the Oct 2025 ceasefire", icon_gaza),
-    ("BANGLADESH", (120, 220, 130), "Garment workers block a highway over pay; 55 factories shut, ~300 arrests", icon_bangladesh),
-    ("ART", (240, 170, 215), "Van Gogh's Blossoming Chestnut Trees sells for $190.4M, a new auction record", icon_art),
-    ("SPACE", (190, 170, 255), "Voyager 1 reaches one light-day from Earth, a first for any human-made object", icon_voyager),
+    ("UKRAINE", (80, 160, 255), "Crimea bridge hit for the 3rd time in 4 days; Russia shuts it to all traffic", icon_bridge),
+    ("GAZA", (110, 210, 150), "Israel opens its first operation in central Gaza since the Oct 2025 ceasefire", icon_gaza),
+    ("US", (130, 160, 255), "House Democrats nominate Hakeem Jeffries for Speaker after midterm wins", icon_capitol),
+    ("MARKETS", (110, 230, 160), "Anthropic prices the biggest IPO ever, a reported $107B; trading starts 19 Nov", icon_ipo),
+    ("BANGLADESH", (240, 200, 90), "Garment workers block a highway over pay; 55 factories shut, ~300 arrests", icon_bangladesh),
+    ("SPACE", (190, 170, 255), "Voyager 1 reaches one light-day from Earth, a first for a human-made object", icon_voyager),
 ]
 
 
@@ -156,22 +179,33 @@ def main():
     box(d, 222, 94, 580, 52, ACCENT, r=26)
     d.text((W // 2 * S, 121 * S), "WEDNESDAY 18 NOVEMBER 2026", font=font(BOLD, 34), fill=(20, 24, 40), anchor="mm")
 
-    tag_f, head_f = font(HEAVY, 30), font(BOLD, 27)
-    pw, ph, gx, gy = 484, 258, 20, 14
-    x0, y0 = 28, 164
+    tag_f, head_f, hero_f = font(HEAVY, 28), font(BOLD, 25), font(BOLD, 33)
+    x0, y0, full_w = 28, 160, 968
+    # hero: the day's biggest story, across the full width
+    tag, color, text, icon = HERO
+    box(d, x0, y0, full_w, 196, PANEL, r=20, outline=color, width=3)
+    d.text(((x0 + 26) * S, (y0 + 30) * S), tag, font=font(HEAVY, 30), fill=color, anchor="lm")
+    icon(d, x0 + 24, y0 + 34)
+    ty = y0 + 56
+    for ln in wrap(d, text, hero_f, full_w - 220):
+        d.text(((x0 + 196) * S, ty * S), ln, font=hero_f, fill=INK)
+        ty += 42
+
+    pw, ph, gx, gy = 484, 200, 20, 10
+    y1 = y0 + 196 + 10
     for idx, (tag, color, text, icon) in enumerate(STORIES):
         col, row = idx % 2, idx // 2
-        x, y = x0 + col * (pw + gx), y0 + row * (ph + gy)
+        x, y = x0 + col * (pw + gx), y1 + row * (ph + gy)
         box(d, x, y, pw, ph, PANEL, r=20)
-        rect(d, x + 18, y + 18, x + 24, y + 54, color)
-        d.text(((x + 34) * S, (y + 36) * S), tag, font=tag_f, fill=color, anchor="lm")
-        icon(d, x + 14, y + 74)
-        ty = y + 76
-        for ln in wrap(d, text, head_f, pw - 206):
+        rect(d, x + 18, y + 14, x + 24, y + 44, color)
+        d.text(((x + 34) * S, (y + 30) * S), tag, font=tag_f, fill=color, anchor="lm")
+        icon(d, x + 14, y + 44)
+        ty = y + 56
+        for ln in wrap(d, text, head_f, pw - 196):
             d.text(((x + 172) * S, ty * S), ln, font=head_f, fill=INK)
-            ty += 34
+            ty += 31
 
-    foot = "Reported 18 Nov 2026 · AP · BBC · CNN · AFP · The Daily Star"
+    foot = "Reported 18 Nov 2026 · AP · BBC · CNN · PBS · Democracy Now · The Daily Star"
     d.text((W // 2 * S, 1004 * S), foot, font=font(BOLD, 17), fill=MUTED, anchor="mm")
 
     img = img.resize((W, H), Image.LANCZOS)
